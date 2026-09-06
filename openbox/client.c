@@ -3999,13 +3999,14 @@ static gboolean find_destroy_unmap(XEvent *e, gpointer data)
     return FALSE;
 }
 
-gboolean client_validate(ObClient *self)
+static gboolean client_validate_internal(ObClient *self, gboolean sync)
 {
     struct ObClientFindDestroyUnmap find;
     XWindowAttributes attributes;
     gboolean valid;
 
-    XSync(obt_display, FALSE); /* get all events on the server */
+    if (sync)
+        XSync(obt_display, FALSE); /* get all events on the server */
 
     find.window = self->window;
     find.ignore_unmaps = self->ignore_unmaps;
@@ -4014,11 +4015,11 @@ gboolean client_validate(ObClient *self)
     /* A buggy or abruptly exiting client can disappear without a usable
        DestroyNotify reaching this ObClient.  Confirm that the XID advertised
        in _NET_CLIENT_LIST still names a real window. */
-    if (valid) {
-        obt_display_ignore_errors(TRUE);
+    if (valid)
+        /* XGetWindowAttributes is synchronous, and BadWindow is already
+           ignored by the display error handler.  Avoid toggling the global
+           error mode here: each toggle performs another XSync round trip. */
         valid = XGetWindowAttributes(obt_display, self->window, &attributes);
-        obt_display_ignore_errors(FALSE);
-    }
 
     if (!valid) {
         ob_debug("Stale client found for window 0x%lx", self->window);
@@ -4028,14 +4029,24 @@ gboolean client_validate(ObClient *self)
     return TRUE;
 }
 
+gboolean client_validate(ObClient *self)
+{
+    return client_validate_internal(self, TRUE);
+}
+
 void client_validate_all(void)
 {
     GList *it;
 
+    /* One synchronization fills the local event queue for the entire batch.
+       Synchronizing once per client makes task switching and the temporary
+       post-map validation timer scale poorly with the number of windows. */
+    XSync(obt_display, FALSE);
+
     for (it = client_list; it;) {
         GList *next = g_list_next(it);
         ObClient *client = it->data;
-        if (!client_validate(client))
+        if (!client_validate_internal(client, FALSE))
             client_unmanage(client);
         it = next;
     }

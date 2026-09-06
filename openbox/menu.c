@@ -794,7 +794,7 @@ static void sort_range(ObMenu *self, GList *start, GList *end, guint len)
 
 void menu_sort_entries(ObMenu *self)
 {
-    GList *it, *start, *end, *last;
+    GList *it, *start, *end, *last = NULL;
     guint len;
 
     /* need the submenus to know their labels for sorting */
