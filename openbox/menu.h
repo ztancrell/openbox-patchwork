@@ -75,6 +75,12 @@ struct _ObMenu
     /* Command to execute to rebuild the menu */
     gchar *execute;
 
+    /* Pending pipe output belongs to this cache generation. */
+    guint pipe_source;
+    GIOChannel *pipe_channel;
+    GString *pipe_output;
+    gboolean pipe_loaded;
+
     /* ObMenuEntry list */
     GList *entries;
 

@@ -167,6 +167,7 @@ obt_libobt_la_SOURCES = \
 ## openbox ##
 
 openbox_openbox_CPPFLAGS = \
+	$(XCB_CFLAGS) \
 	$(SM_CFLAGS) \
 	$(X_CFLAGS) \
 	$(XCURSOR_CFLAGS) \
@@ -180,6 +181,7 @@ openbox_openbox_CPPFLAGS = \
 	-DCONFIGDIR=\"$(configdir)\" \
 	-DG_LOG_DOMAIN=\"Openbox\"
 openbox_openbox_LDADD = \
+	$(XCB_LIBS) \
 	$(XINERAMA_LIBS) \
 	$(XRANDR_LIBS) \
 	$(SM_LIBS) \
@@ -570,6 +572,8 @@ dist_noinst_DATA = \
 	obt/obt-3.5.pc.in \
 	obt/version.h.in \
 	tools/themeupdate/themeupdate.py \
+	tests/async-pipemenu.py \
+	PERFORMANCE.md \
 	tests/hideshow.py \
 	tests/Makefile \
 	tests/aspect.c \

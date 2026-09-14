@@ -952,6 +952,36 @@ static void menu_frame_update(ObMenuFrame *self)
     menu_frame_render(self);
 }
 
+void menu_frame_refresh(ObMenu *menu)
+{
+    GList *it;
+
+    for (it = menu_frame_visible; it; it = g_list_next(it)) {
+        ObMenuFrame *self = it->data;
+        gint x, y, dx, dy;
+        if (self->menu != menu)
+            continue;
+
+        /* A loading placeholder cannot have an open child submenu. */
+        g_assert(self->child == NULL);
+        self->selected = NULL;
+        while (self->entries) {
+            menu_entry_frame_free(self->entries->data);
+            self->entries = g_list_delete_link(self->entries, self->entries);
+        }
+        menu_frame_update(self);
+        x = self->area.x;
+        y = self->area.y;
+        if (self->parent)
+            menu_frame_place_submenu(self, &x, &y);
+        menu_frame_move_on_screen(self, x, y, &dx, &dy);
+        menu_frame_move(self, x + dx, y + dy);
+        /* Preserve keyboard navigation without executing a newly loaded item. */
+        menu_frame_select_first(self);
+        break;
+    }
+}
+
 static gboolean menu_frame_is_visible(ObMenuFrame *self)
 {
     return !!(g_list_find(menu_frame_visible, self));

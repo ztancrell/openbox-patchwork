@@ -25,6 +25,10 @@ upstream Openbox maintainers.
   before size calculations and allocations.
 - **Session restore fixes** correct fullscreen coordinates and replace
   quadratic duplicate matching with an ownership-safe hash-table pass.
+- **Responsive pipe menus** collect command output through the event loop, so
+  a slow script no longer blocks window-manager input.
+- **Reduced X11 waits** pipeline batch client validation when XCB is available
+  and flush mouse-drag updates without waiting for server completion.
 - **Additional hardening** covers theme-number parsing, fullscreen stacking,
   and GDM socket path handling.
 
@@ -70,6 +74,18 @@ Then select the locally installed Openbox session at login.
 Every proposed change should at minimum pass a clean build, `make check`, and
 `git diff --check`. Window-lifecycle or property changes should also be tested
 under Xvfb and on a real X11 session before release.
+
+The responsiveness and window-lifecycle regression suite runs on its own Xvfb
+server (requires Python 3, Xvfb, xdotool, xprop, and the Clearlooks theme):
+
+```sh
+python3 tests/async-pipemenu.py
+```
+
+XCB validation is enabled automatically when `x11-xcb` and `xcb` development
+packages are available. Use `./configure --disable-xcb` to build the original
+Xlib validation path. See [performance notes](PERFORMANCE.md) for behavior,
+validation results, and remaining limitations.
 
 Tests reduce risk; they do not make this fork a security audit. See
 [AI_ASSISTANCE.md](AI_ASSISTANCE.md) for the project policy, review process,

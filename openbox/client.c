@@ -55,6 +55,11 @@
 
 #include <glib.h>
 #include <X11/Xutil.h>
+#ifdef USE_XCB
+#include <X11/Xlib-xcb.h>
+#include <xcb/xcb.h>
+#include <stdlib.h>
+#endif
 
 /*! The event mask to grab on client windows */
 #define CLIENT_EVENTMASK (PropertyChangeMask | StructureNotifyMask | \
@@ -3999,18 +4004,23 @@ static gboolean find_destroy_unmap(XEvent *e, gpointer data)
     return FALSE;
 }
 
-static gboolean client_validate_internal(ObClient *self, gboolean sync)
+static gboolean client_has_pending_destroy(ObClient *self)
 {
     struct ObClientFindDestroyUnmap find;
+    find.window = self->window;
+    find.ignore_unmaps = self->ignore_unmaps;
+    return xqueue_exists_local(find_destroy_unmap, &find);
+}
+
+static gboolean client_validate_internal(ObClient *self, gboolean sync)
+{
     XWindowAttributes attributes;
     gboolean valid;
 
     if (sync)
         XSync(obt_display, FALSE); /* get all events on the server */
 
-    find.window = self->window;
-    find.ignore_unmaps = self->ignore_unmaps;
-    valid = !xqueue_exists_local(find_destroy_unmap, &find);
+    valid = !client_has_pending_destroy(self);
 
     /* A buggy or abruptly exiting client can disappear without a usable
        DestroyNotify reaching this ObClient.  Confirm that the XID advertised
@@ -4043,6 +4053,46 @@ void client_validate_all(void)
        post-map validation timer scale poorly with the number of windows. */
     XSync(obt_display, FALSE);
 
+#ifdef USE_XCB
+    {
+        typedef struct {
+            ObClient *client;
+            Window window;
+            xcb_get_window_attributes_cookie_t cookie;
+            gboolean valid;
+        } Validation;
+        xcb_connection_t *connection = XGetXCBConnection(obt_display);
+        guint count = g_list_length(client_list), i;
+        Validation *batch = g_new(Validation, count);
+
+        /* Keep Xlib in charge of events. Queue every query before waiting
+           for replies, so validation does not pay one round trip per window. */
+        for (it = client_list, i = 0; it; it = g_list_next(it), ++i) {
+            batch[i].client = it->data;
+            batch[i].window = batch[i].client->window;
+            batch[i].cookie = xcb_get_window_attributes(connection,
+                                                        batch[i].window);
+        }
+        for (i = 0; i < count; ++i) {
+            xcb_generic_error_t *error = NULL;
+            xcb_get_window_attributes_reply_t *reply =
+                xcb_get_window_attributes_reply(connection, batch[i].cookie,
+                                                 &error);
+            batch[i].valid = reply != NULL;
+            free(reply);
+            free(error);
+        }
+        /* Finish reading replies before unmanaging: cleanup itself uses Xlib
+           and can change client lists through callbacks. Resolve each XID again. */
+        for (i = 0; i < count; ++i) {
+            ObWindow *window = window_find(batch[i].window);
+            if (window == CLIENT_AS_WINDOW(batch[i].client) &&
+                (!batch[i].valid || client_has_pending_destroy(batch[i].client)))
+                client_unmanage(batch[i].client);
+        }
+        g_free(batch);
+    }
+#else
     for (it = client_list; it;) {
         GList *next = g_list_next(it);
         ObClient *client = it->data;
@@ -4050,6 +4100,7 @@ void client_validate_all(void)
             client_unmanage(client);
         it = next;
     }
+#endif
 }
 
 void client_set_wm_state(ObClient *self, glong state)

@@ -131,6 +131,9 @@ void menu_frame_hide_all_client(struct _ObClient *client);
 
 void menu_frame_render(ObMenuFrame *self);
 
+/*! Rebuild a visible pipe-menu after its output arrives. */
+void menu_frame_refresh(struct _ObMenu *menu);
+
 void menu_frame_select(ObMenuFrame *self, ObMenuEntryFrame *entry,
                        gboolean immediate);
 void menu_frame_select_previous(ObMenuFrame *self);

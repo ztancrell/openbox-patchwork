@@ -125,6 +125,16 @@ PKG_CHECK_MODULES(XML, [libxml-2.0 >= 2.6.0])
 AC_SUBST(XML_CFLAGS)
 AC_SUBST(XML_LIBS)
 
+AC_ARG_ENABLE(xcb,
+  AC_HELP_STRING([--disable-xcb],
+                 [disable pipelined client validation. [default=enabled]]),
+  [enable_xcb=$enableval], [enable_xcb=yes])
+if test "$enable_xcb" = yes; then
+  PKG_CHECK_MODULES(XCB, [x11-xcb xcb],
+    [AC_DEFINE(USE_XCB, [1], [Use XCB for pipelined client validation])],
+    [XCB_CFLAGS=""; XCB_LIBS=""])
+fi
+
 AC_ARG_ENABLE(startup-notification,
   AC_HELP_STRING(
     [--disable-startup-notification],

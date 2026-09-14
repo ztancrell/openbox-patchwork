@@ -52,6 +52,7 @@ static gboolean menu_can_hide = FALSE;
 static guint menu_timeout_id = 0;
 
 static void menu_destroy_hash_value(ObMenu *self);
+static void menu_pipe_close(ObMenu *self);
 static void parse_menu_item(xmlNodePtr node, gpointer data);
 static void parse_menu_separator(xmlNodePtr node, gpointer data);
 static void parse_menu(xmlNodePtr node, gpointer data);
@@ -142,8 +143,11 @@ static gboolean menu_pipe_submenu(gpointer key, gpointer val, gpointer data)
 static void clear_cache(gpointer key, gpointer val, gpointer data)
 {
     ObMenu *menu = val;
-    if (menu->execute)
+    if (menu->execute) {
+        menu_pipe_close(menu);
+        menu->pipe_loaded = FALSE;
         menu_clear_entries(menu);
+    }
 }
 
 void menu_clear_pipe_caches(void)
@@ -154,35 +158,131 @@ void menu_clear_pipe_caches(void)
     g_hash_table_foreach(menu_hash, clear_cache, NULL);
 }
 
-void menu_pipe_execute(ObMenu *self)
+static void menu_pipe_close(ObMenu *self)
 {
-    gchar *output;
-    GError *err = NULL;
-
-    if (!self->execute)
-        return;
-    if (self->entries) /* the entries are already created and cached */
-        return;
-
-    if (!g_spawn_command_line_sync(self->execute, &output, NULL, NULL, &err)) {
-        g_message(_("Failed to execute command for pipe-menu \"%s\": %s"),
-                  self->name, err->message);
-        g_error_free(err);
-        return;
+    if (self->pipe_source) {
+        g_source_remove(self->pipe_source);
+        self->pipe_source = 0;
     }
+    if (self->pipe_channel) {
+        g_io_channel_unref(self->pipe_channel);
+        self->pipe_channel = NULL;
+    }
+    if (self->pipe_output) {
+        g_string_free(self->pipe_output, TRUE);
+        self->pipe_output = NULL;
+    }
+}
 
-    if (obt_xml_load_mem(menu_parse_inst, output, strlen(output),
-                         "openbox_pipe_menu"))
-    {
+static gboolean menu_pipe_read(GIOChannel *channel, GIOCondition condition,
+                               gpointer data)
+{
+    ObMenu *self = data;
+    GIOStatus status = G_IO_STATUS_NORMAL;
+    gboolean failed = FALSE;
+    guint budget = 64 * 1024;
+
+    /* Bound both memory use and work per dispatch, including on HUP: a
+       closed pipe may still contain more than one dispatch worth of data. */
+    while (budget) {
+        gchar buf[4096];
+        gsize bytes = 0;
+        status = g_io_channel_read_chars(channel, buf, sizeof(buf),
+                                         &bytes, NULL);
+        if (bytes) {
+            if (self->pipe_output->len + bytes > 4 * 1024 * 1024) {
+                failed = TRUE;
+                break;
+            }
+            g_string_append_len(self->pipe_output, buf, bytes);
+            budget -= bytes;
+        }
+        if (status != G_IO_STATUS_NORMAL || !bytes)
+            break;
+    }
+    if (!failed && status != G_IO_STATUS_EOF &&
+        status != G_IO_STATUS_ERROR && !(condition & (G_IO_ERR | G_IO_NVAL)))
+        return TRUE;
+
+    failed |= status == G_IO_STATUS_ERROR ||
+        !!(condition & (G_IO_ERR | G_IO_NVAL));
+    self->pipe_source = 0; /* this callback removes its own source */
+    self->pipe_loaded = TRUE;
+
+    /* The only entry while loading is our disabled placeholder. Its frame
+       keeps a reference until menu_frame_refresh() rebuilds the display. */
+    menu_entry_remove(self->entries->data);
+    self->more_menu->entries = self->entries;
+    if (!failed && obt_xml_load_mem(menu_parse_inst, self->pipe_output->str,
+                                    self->pipe_output->len,
+                                    "openbox_pipe_menu")) {
         menu_parse_state.pipe_creator = self;
         menu_parse_state.parent = self;
         obt_xml_tree_from_root(menu_parse_inst);
         obt_xml_close(menu_parse_inst);
+        menu_parse_state.pipe_creator = NULL;
+        menu_parse_state.parent = NULL;
     } else {
         g_message(_("Invalid output from pipe-menu \"%s\""), self->execute);
+        menu_add_normal(self, -1, _("Unable to load menu"), NULL, FALSE)
+            ->data.normal.enabled = FALSE;
     }
+    if (!self->entries)
+        menu_add_normal(self, -1, _("Empty menu"), NULL, FALSE)
+            ->data.normal.enabled = FALSE;
 
-    g_free(output);
+    menu_pipe_close(self);
+    menu_frame_refresh(self);
+    return FALSE;
+}
+
+void menu_pipe_execute(ObMenu *self)
+{
+    gchar **argv = NULL;
+    gint output;
+    GError *err = NULL;
+
+    if (!self->execute || self->entries || self->pipe_source || self->pipe_loaded)
+        return;
+
+    /* Openbox's SIGCHLD handler already reaps children. Do not install a
+       competing GLib child watch; completion here is stdout EOF. */
+    if (!g_shell_parse_argv(self->execute, NULL, &argv, &err) ||
+        !g_spawn_async_with_pipes(NULL, argv, NULL,
+                                  G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+                                  NULL, NULL, NULL, NULL, &output, NULL, &err)) {
+        g_message(_("Failed to execute command for pipe-menu \"%s\": %s"),
+                  self->name, err->message);
+        g_error_free(err);
+        g_strfreev(argv);
+        self->pipe_loaded = TRUE;
+        menu_add_normal(self, -1, _("Unable to load menu"), NULL, FALSE)
+            ->data.normal.enabled = FALSE;
+        return;
+    }
+    g_strfreev(argv);
+
+    self->pipe_channel = g_io_channel_unix_new(output);
+    g_io_channel_set_close_on_unref(self->pipe_channel, TRUE);
+    g_io_channel_set_encoding(self->pipe_channel, NULL, NULL);
+    g_io_channel_set_buffered(self->pipe_channel, FALSE);
+    if (g_io_channel_set_flags(self->pipe_channel,
+                               g_io_channel_get_flags(self->pipe_channel) |
+                               G_IO_FLAG_NONBLOCK, &err) != G_IO_STATUS_NORMAL) {
+        g_message("Unable to read pipe-menu: %s", err->message);
+        g_error_free(err);
+        menu_pipe_close(self);
+        self->pipe_loaded = TRUE;
+        menu_add_normal(self, -1, _("Unable to load menu"), NULL, FALSE)
+            ->data.normal.enabled = FALSE;
+        return;
+    }
+    self->pipe_output = g_string_new(NULL);
+    menu_add_normal(self, -1, _("Loading..."), NULL, FALSE)
+        ->data.normal.enabled = FALSE;
+    self->pipe_source = g_io_add_watch(self->pipe_channel,
+                                      G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+                                      menu_pipe_read, self);
 }
 
 static ObMenu* menu_from_name(gchar *name)
@@ -419,6 +519,7 @@ ObMenu* menu_new(const gchar *name, const gchar *title,
 
 static void menu_destroy_hash_value(ObMenu *self)
 {
+    menu_pipe_close(self);
     /* make sure its not visible */
     {
         GList *it;
@@ -426,8 +527,10 @@ static void menu_destroy_hash_value(ObMenu *self)
 
         for (it = menu_frame_visible; it; it = g_list_next(it)) {
             f = it->data;
-            if (f->menu == self)
+            if (f->menu == self) {
                 menu_frame_hide_all();
+                break;
+            }
         }
     }
 

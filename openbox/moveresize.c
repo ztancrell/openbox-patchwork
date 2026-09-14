@@ -966,7 +966,9 @@ gboolean moveresize_event(XEvent *e)
             cur_x = start_cx + e->xmotion.x_root - start_x;
             cur_y = start_cy + e->xmotion.y_root - start_y;
             do_move(FALSE, 0);
-            XSync(obt_display, FALSE);
+            /* Submit movement promptly without waiting for the server.
+               Edge-warp decisions below use the event coordinates. */
+            XFlush(obt_display);
             do_edge_warp(e->xmotion.x_root, e->xmotion.y_root);
         } else {
             gint dw, dh;
