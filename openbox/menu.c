@@ -187,7 +187,7 @@ static gboolean menu_pipe_read(GIOChannel *channel, GIOCondition condition,
     while (budget) {
         gchar buf[4096];
         gsize bytes = 0;
-        status = g_io_channel_read_chars(channel, buf, sizeof(buf),
+        status = g_io_channel_read_chars(channel, buf, MIN(sizeof(buf), budget),
                                          &bytes, NULL);
         if (bytes) {
             if (self->pipe_output->len + bytes > 4 * 1024 * 1024) {
@@ -212,7 +212,6 @@ static gboolean menu_pipe_read(GIOChannel *channel, GIOCondition condition,
     /* The only entry while loading is our disabled placeholder. Its frame
        keeps a reference until menu_frame_refresh() rebuilds the display. */
     menu_entry_remove(self->entries->data);
-    self->more_menu->entries = self->entries;
     if (!failed && obt_xml_load_mem(menu_parse_inst, self->pipe_output->str,
                                     self->pipe_output->len,
                                     "openbox_pipe_menu")) {
@@ -324,22 +323,25 @@ static gunichar parse_shortcut(const gchar *label, gboolean allow_shortcut,
            have to just use the first valid character
         */
 
-        /* allow __ to escape an underscore */
-        i = *strippedlabel;
-        do {
-            escape = FALSE;
-            i = strchr(i, '_');
-            if (i && *(i+1) == '_') {
-                gchar *j;
-
-                /* remove the escape '_' from the string */
-                for (j = i; *j != '\0'; ++j)
-                    *j = *(j+1);
-
-                ++i;
-                escape = TRUE;
+        /* Compact escaped underscores in one pass. As before, the first
+           unescaped underscore ends escape processing for this label. */
+        {
+            gchar *read = *strippedlabel, *write = read;
+            i = NULL;
+            escape = TRUE;
+            while (*read) {
+                if (escape && *read == '_') {
+                    if (read[1] == '_')
+                        ++read;
+                    else {
+                        i = write;
+                        escape = FALSE;
+                    }
+                }
+                *write++ = *read++;
             }
-        } while (escape);
+            *write = '\0';
+        }
 
         if (allow_shortcut && i != NULL) {
             /* there is an underscore in the string */
@@ -704,13 +706,35 @@ void menu_clear_entries(ObMenu *self)
         menu_entry_unref(self->entries->data);
         self->entries = g_list_delete_link(self->entries, self->entries);
     }
+    self->entries_tail = NULL;
     self->more_menu->entries = self->entries; /* keep it in sync */
 }
 
 void menu_entry_remove(ObMenuEntry *self)
 {
-    self->menu->entries = g_list_remove(self->menu->entries, self);
+    ObMenu *menu = self->menu;
+    GList *link = g_list_find(menu->entries, self);
+    if (link) {
+        if (link == menu->entries_tail)
+            menu->entries_tail = link->prev;
+        menu->entries = g_list_delete_link(menu->entries, link);
+        menu->more_menu->entries = menu->entries;
+    }
     menu_entry_unref(self);
+}
+
+static void menu_entry_append(ObMenu *self, ObMenuEntry *entry)
+{
+    GList *link = g_list_alloc();
+    link->data = entry;
+    link->prev = self->entries_tail;
+    link->next = NULL;
+    if (self->entries_tail)
+        self->entries_tail->next = link;
+    else
+        self->entries = link;
+    self->entries_tail = link;
+    self->more_menu->entries = self->entries;
 }
 
 ObMenuEntry* menu_add_normal(ObMenu *self, gint id, const gchar *label,
@@ -723,8 +747,7 @@ ObMenuEntry* menu_add_normal(ObMenu *self, gint id, const gchar *label,
 
     menu_entry_set_label(e, label, allow_shortcut);
 
-    self->entries = g_list_append(self->entries, e);
-    self->more_menu->entries = self->entries; /* keep it in sync */
+    menu_entry_append(self, e);
     return e;
 }
 
@@ -746,8 +769,7 @@ ObMenuEntry* menu_add_submenu(ObMenu *self, gint id, const gchar *submenu)
     e = menu_entry_new(self, OB_MENU_ENTRY_TYPE_SUBMENU, id);
     e->data.submenu.name = g_strdup(submenu);
 
-    self->entries = g_list_append(self->entries, e);
-    self->more_menu->entries = self->entries; /* keep it in sync */
+    menu_entry_append(self, e);
     return e;
 }
 
@@ -759,8 +781,7 @@ ObMenuEntry* menu_add_separator(ObMenu *self, gint id, const gchar *label)
 
     menu_entry_set_label(e, label, FALSE);
 
-    self->entries = g_list_append(self->entries, e);
-    self->more_menu->entries = self->entries; /* keep it in sync */
+    menu_entry_append(self, e);
     return e;
 }
 

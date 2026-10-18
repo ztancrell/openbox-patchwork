@@ -60,6 +60,43 @@ Large menus can therefore still cause a pause after command output arrives.
 Moving image decoding off-thread needs a separate design for decoder state,
 cache ownership, and result delivery; it is not included in these changes.
 
+## Input and menu work limits
+
+Property reads now reject truncated/oversized values before making a packed
+copy: ordinary array and text properties are limited to 1 MiB, and the complete
+`_NET_WM_ICON` property to 16 MiB. Icon processing uses at most the first 64
+valid images. These are aggregate limits in addition to the existing dimension
+and pixel checks; unusually large icons or properties previously accepted may
+now fall back to legacy or default icons/titles.
+
+Modern icon conversion and cache insertion run without grabbing the X server.
+Legacy pixmap capture retains its grab. Default-icon publication uses a short
+grab and a zero-length property query to avoid overwriting a client property
+that arrived during decoding. Nonempty rejected properties are left intact;
+Openbox renders its fallback icon instead of rewriting them.
+
+Pipe reads request no more than the remaining dispatch budget, including after
+short reads and on HUP. Menu label escape processing uses one compaction pass,
+and entry/frame insertion maintains a tail instead of repeatedly traversing
+the list. Escape handling still stops at the first unescaped underscore, so
+existing explicit-shortcut and trailing-underscore behavior is preserved.
+
+`make check` now runs the existing obt unit suite and menu regressions covering
+shortcut behavior, list order and lifetime, and controlled short reads. The
+Xvfb suite also runs `tests/property-limits` on its private display to exercise
+exact property limits, rejection above those limits, type handling, and
+non-NUL-terminated UTF-8. It includes a 400 KB escaped-label menu execution
+check. Build with `make check` before running the Xvfb suite.
+
+For these fixes, clean debug builds, `make check`, and the complete private-Xvfb
+suite passed with XCB enabled and disabled. An exhaustive comparison of 671,846
+short-label/shortcut-mode combinations matched the previous parser. In the same
+`gcc -O2` extracted-function benchmark used for the source review, a 400 KB
+underscore label fell from 9.38–9.53 seconds to 0.24–0.35 milliseconds over three
+runs. These are parser timings, not whole-desktop speedups. The debug-build unit
+test constructs 40,000 menu entries in roughly 5 milliseconds; the Xvfb suite
+also checks actual long-label execution. Real-session validation remains pending.
+
 Xvfb checks do not cover real GPU/compositor behavior, multi-monitor layouts,
 or remote X server latency. A real X11 session test remains required before
 release. These changes do not install or restart the active window manager.

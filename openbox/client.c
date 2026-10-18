@@ -2355,20 +2355,19 @@ void client_update_icons(ObClient *self)
 {
     guint num;
     guint32 *data;
-    guint w, h, i, j;
+    guint w, h, i, j, icons;
     RrImage *img;
+    gboolean published = FALSE;
 
     img = NULL;
 
-    /* grab the server, because we might be setting the window's icon and
-       we don't want them to set it in between and we overwrite their own
-       icon */
-    grab_server(TRUE);
-
+    /* Property reads return a snapshot. Decode it without holding the server
+       grab; publishing a default below has its own short race check. */
     if (OBT_PROP_GETA32(self->window, NET_WM_ICON, CARDINAL, &data, &num)) {
         /* figure out how many valid icons are in here */
         i = 0;
-        while (i + 2 < num) { /* +2 is to make sure there is a w and h */
+        icons = 0;
+        while (i + 2 < num && icons < 64) {
             w = data[i++];
             h = data[i++];
             /* Watch for data too small for the specified size, zero-sized
@@ -2397,6 +2396,7 @@ void client_update_icons(ObClient *self)
                 RrImageAddFromData(img, &data[i], w, h);
 
             i += w*h;
+            ++icons;
         }
 
         g_free(data);
@@ -2407,6 +2407,8 @@ void client_update_icons(ObClient *self)
     if (!img) {
         XWMHints *hints;
 
+        /* Keep legacy pixmaps alive while copying them from the server. */
+        grab_server(TRUE);
         if ((hints = XGetWMHints(obt_display, self->window))) {
             if (hints->flags & IconPixmapHint) {
                 gboolean xicon;
@@ -2431,6 +2433,7 @@ void client_update_icons(ObClient *self)
             }
             XFree(hints);
         }
+        grab_server(FALSE);
     }
 
     /* set the client's icons to be whatever we found */
@@ -2443,6 +2446,10 @@ void client_update_icons(ObClient *self)
     if (!self->icon_set && !self->parents) {
         RrPixel32 *icon = ob_rr_theme->def_win_icon;
         gulong *ldata; /* use a long here to satisfy OBT_PROP_SETA32 */
+        Atom type;
+        gint format, status;
+        gulong items, remaining;
+        guchar *property = NULL;
 
         w = ob_rr_theme->def_win_icon_w;
         h = ob_rr_theme->def_win_icon_h;
@@ -2454,14 +2461,25 @@ void client_update_icons(ObClient *self)
                 (((icon[i] >> RrDefaultRedOffset) & 0xff) << 16) +
                 (((icon[i] >> RrDefaultGreenOffset) & 0xff) << 8) +
                 (((icon[i] >> RrDefaultBlueOffset) & 0xff) << 0);
-        OBT_PROP_SETA32(self->window, NET_WM_ICON, CARDINAL, ldata, w*h+2);
+        /* Do not overwrite a client's property that arrived during decoding,
+           or replace rejected input and trigger another expensive update. */
+        grab_server(TRUE);
+        status = XGetWindowProperty(obt_display, self->window,
+                                    OBT_PROP_ATOM(NET_WM_ICON), 0, 0, FALSE,
+                                    AnyPropertyType, &type, &format, &items,
+                                    &remaining, &property);
+        if (status == Success && (type == None || remaining == 0)) {
+            OBT_PROP_SETA32(self->window, NET_WM_ICON, CARDINAL, ldata, w*h+2);
+            published = TRUE;
+        }
+        XFree(property);
+        grab_server(FALSE);
         g_free(ldata);
-    } else if (self->frame)
+    }
+    if (!published && self->frame)
         /* don't draw the icon empty if we're just setting one now anyways,
            we'll get the property change any second */
         frame_adjust_icon(self->frame);
-
-    grab_server(FALSE);
 }
 
 void client_update_icon_geometry(ObClient *self)

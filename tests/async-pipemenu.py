@@ -49,6 +49,12 @@ def main():
                     os.close(read_fd)
             env = dict(os.environ, DISPLAY=':' + display,
                        XDG_CONFIG_HOME=str(tmp), LC_ALL='C')
+            property_test = binary.parent.parent / 'tests/property-limits'
+            if not property_test.exists():
+                property_test = Path(__file__).resolve().with_name('property-limits')
+            subprocess.run([str(property_test)],
+                           env=dict(env, OPENBOX_PRIVATE_TEST_DISPLAY='1'),
+                           check=True, timeout=20)
 
             def run(*args):
                 return subprocess.check_output(args, env=env, text=True,
@@ -75,7 +81,8 @@ elif mode == 'oversized':
         pass
 else:
     padding = '<!--' + 'x' * 180000 + '-->' if mode == 'large' else ''
-    print('<openbox_pipe_menu>' + padding + '<item label="Ready"><action name="Execute"><command>touch ' + str(p / 'executed') + '</command></action></item></openbox_pipe_menu>')
+    label = '_' * 400000 if mode == 'escaped' else 'Ready'
+    print('<openbox_pipe_menu>' + padding + '<item label="' + label + '"><action name="Execute"><command>touch ' + str(p / 'executed') + '</command></action></item></openbox_pipe_menu>')
 (p / 'finished').touch()
 ''')
             command = escape(f'{sys.executable} {script} {tmp}')
@@ -145,6 +152,15 @@ else:
             key('Return')
             wait_for(lambda: (tmp / 'executed').exists(), 'nested pipe action failed')
             print('PASS: asynchronous submenu refresh and execution')
+
+            open_menu('escaped')
+            wait_for(lambda: (tmp / 'finished').exists(), 'escaped label output stalled')
+            time.sleep(0.15)
+            start = time.monotonic()
+            key('Return')
+            wait_for(lambda: (tmp / 'executed').exists(),
+                     'escaped label blocked menu execution', timeout=2)
+            print(f'PASS: 400 KB escaped label remains usable: {time.monotonic() - start:.3f}s')
 
             for mode in ('invalid', 'empty', 'oversized'):
                 open_menu(mode)

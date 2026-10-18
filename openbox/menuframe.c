@@ -850,7 +850,7 @@ void menu_frame_render(ObMenuFrame *self)
 
 static void menu_frame_update(ObMenuFrame *self)
 {
-    GList *mit, *fit;
+    GList *mit, *fit, *tail;
     const Rect *a;
     gint h;
 
@@ -872,9 +872,18 @@ static void menu_frame_update(ObMenuFrame *self)
     }
 
     /* if there are more menu entries than in the frame, add them */
+    tail = g_list_last(self->entries);
     while (mit) {
         ObMenuEntryFrame *e = menu_entry_frame_new(mit->data, self);
-        self->entries = g_list_append(self->entries, e);
+        GList *link = g_list_alloc();
+        link->data = e;
+        link->prev = tail;
+        link->next = NULL;
+        if (tail)
+            tail->next = link;
+        else
+            self->entries = link;
+        tail = link;
         mit = g_list_next(mit);
     }
 

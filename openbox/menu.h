@@ -83,6 +83,7 @@ struct _ObMenu
 
     /* ObMenuEntry list */
     GList *entries;
+    GList *entries_tail; /* maintained by the owning menu, not its More alias */
 
     /* plugin data */
     gpointer data;

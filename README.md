@@ -79,6 +79,7 @@ The responsiveness and window-lifecycle regression suite runs on its own Xvfb
 server (requires Python 3, Xvfb, xdotool, xprop, and the Clearlooks theme):
 
 ```sh
+make check
 python3 tests/async-pipemenu.py
 ```
 

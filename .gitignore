@@ -112,6 +112,14 @@ obt/tests/ddtest
 obt/tests/linktest
 obt/tests/watchtest
 obt/obt_unittests
+tests/menu-regressions
+tests/property-limits
+test-driver
+test-suite.log
+obt/obt_unittests.log
+obt/obt_unittests.trs
+tests/menu-regressions.log
+tests/menu-regressions.trs
 
 # editor/gettext backup files
 *~

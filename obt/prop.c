@@ -258,11 +258,18 @@ static gboolean get_all(Window win, Atom prop, Atom type, gint size,
     gint ret_size;
     gulong ret_items, bytes_left;
 
-    res = XGetWindowProperty(obt_display, win, prop, 0l, G_MAXLONG,
+    /* Bound the Xlib allocation as well as our packed copy. Icons need more
+       space than ordinary hints, but the whole set must fit this budget. */
+    const gulong max_bytes = prop == OBT_PROP_ATOM(NET_WM_ICON) ?
+        16 * 1024 * 1024 : 1024 * 1024;
+
+    res = XGetWindowProperty(obt_display, win, prop, 0l, max_bytes / 4,
                              FALSE, type, &ret_type, &ret_size,
                              &ret_items, &bytes_left, &xdata);
     if (res == Success) {
-        if (ret_size == size && ret_items > 0) {
+        if ((type == AnyPropertyType || ret_type == type) &&
+            ret_size == size && ret_items > 0 &&
+            bytes_left == 0 && ret_items <= max_bytes / (size / 8)) {
             guint i;
 
             *data = g_malloc(ret_items * (size / 8));
@@ -300,7 +307,16 @@ static gboolean get_all(Window win, Atom prop, Atom type, gint size,
 static gboolean get_text_property(Window win, Atom prop,
                                   XTextProperty *tprop, ObtPropTextType type)
 {
-    if (!(XGetTextProperty(obt_display, win, tprop, prop) && tprop->nitems))
+    gulong bytes_left;
+    gint status;
+
+    memset(tprop, 0, sizeof(*tprop));
+    status = XGetWindowProperty(obt_display, win, prop, 0, 1024 * 1024 / 4,
+                               FALSE, AnyPropertyType, &tprop->encoding,
+                               &tprop->format, &tprop->nitems, &bytes_left,
+                               &tprop->value);
+    if (status != Success || bytes_left || !tprop->nitems ||
+        tprop->format != 8)
         return FALSE;
     if (!type)
         return TRUE; /* no type checking */

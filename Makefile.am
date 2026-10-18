@@ -24,7 +24,21 @@ ACLOCAL_AMFLAGS = -I m4
 INCLUDES = -I.
 
 check_PROGRAMS = \
-	obrender/rendertest
+	obrender/rendertest \
+	tests/menu-regressions \
+	tests/property-limits
+
+TESTS = obt/obt_unittests tests/menu-regressions
+
+tests_menu_regressions_SOURCES = tests/menu-regressions.c
+tests_menu_regressions_CPPFLAGS = $(GLIB_CFLAGS) $(XML_CFLAGS) $(PANGO_CFLAGS)
+tests_menu_regressions_CFLAGS = $(CFLAGS) -ffunction-sections -fdata-sections
+tests_menu_regressions_LDFLAGS = -Wl,--gc-sections
+tests_menu_regressions_LDADD = obt/libobt.la $(GLIB_LIBS) $(X_LIBS)
+
+tests_property_limits_SOURCES = tests/property-limits.c
+tests_property_limits_CPPFLAGS = $(GLIB_CFLAGS)
+tests_property_limits_LDADD = obt/libobt.la $(GLIB_LIBS) $(X_LIBS)
 
 lib_LTLIBRARIES = \
 	obt/libobt.la \
