@@ -1694,7 +1694,7 @@ void frame_flash_start(ObFrame *self)
 {
     self->flash_on = self->focused;
 
-    if (!self->flashing)
+    if (!self->flash_timer)
         self->flash_timer = g_timeout_add_full(G_PRIORITY_DEFAULT,
                                                600, flash_timeout, self,
                                                flash_done);
